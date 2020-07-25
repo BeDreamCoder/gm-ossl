@@ -6,91 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 
 package gm_ossl
 
-/*
-#include <openssl/evp.h>
-#include <openssl/ec.h>
-#include <openssl/err.h>
-
-int X_EVP_PKEY_CTX_set_ec_paramgen_curve_nid(EVP_PKEY_CTX *ctx, int nid) {
-	return EVP_PKEY_CTX_set_ec_paramgen_curve_nid(ctx, nid);
-}
-
-int X_EVP_SignInit(EVP_MD_CTX *ctx, const EVP_MD *type) {
-	return EVP_SignInit(ctx, type);
-}
-
-int X_EVP_SignUpdate(EVP_MD_CTX *ctx, const void *d, unsigned int cnt) {
-	return EVP_SignUpdate(ctx, d, cnt);
-}
-
-int X_EVP_VerifyInit(EVP_MD_CTX *ctx, const EVP_MD *type) {
-	return EVP_VerifyInit(ctx, type);
-}
-
-int X_EVP_VerifyUpdate(EVP_MD_CTX *ctx, const void *d,
-		unsigned int cnt) {
-	return EVP_VerifyUpdate(ctx, d, cnt);
-}
-
-int X_EC_GROUP_get_curve_name(EVP_PKEY *sk) {
-	return EC_GROUP_get_curve_name(EC_KEY_get0_group(EVP_PKEY_get0_EC_KEY(sk)));
-}
-
-// EVP_SignFinal p_sign.c
-unsigned char *X_ECWithSM3_Sign(EVP_PKEY *sk, const unsigned char *digest,
-	size_t digestlen, size_t *siglen) {
-	unsigned char *ret = NULL;
-	unsigned char *sig = NULL;
-    EVP_PKEY_CTX *pkctx = NULL;
-
-	pkctx = EVP_PKEY_CTX_new(sk, NULL);
-	if (pkctx == NULL)
-		goto err;
-
-	if (EVP_PKEY_sign_init(pkctx) <= 0)
-		goto err;
-
-	//if (EVP_PKEY_id(sk) != EVP_PKEY_EC || X_EC_GROUP_get_curve_name(sk) != NID_sm2) {
-	//	goto err;
-	//}
-    //if (EVP_PKEY_CTX_set_signature_md(pkctx, EVP_sm3()) <= 0)
-    //   goto err;
-
-	if (!(sig = OPENSSL_zalloc(EVP_PKEY_size(sk))))
-		goto err;
-
-	*siglen = EVP_PKEY_size(sk);
-	if (EVP_PKEY_sign(pkctx, sig, siglen, digest, digestlen) <= 0) {
-		goto err;
-	}
-	ret = sig;
-	sig = NULL;
-err:
-	EVP_PKEY_CTX_free(pkctx);
-	OPENSSL_free(sig);
-	return ret;
-}
-
-
-int X_ECWithSM3_Verify(EVP_PKEY *pk, const unsigned char *digest,
-	size_t digestlen, const unsigned char *sig, size_t siglen) {
-	int ret = -1;
-	EVP_PKEY_CTX *pkctx = NULL;
-
-	pkctx = EVP_PKEY_CTX_new(pk, NULL);
-    if (pkctx == NULL)
-        goto err;
-
-    if (EVP_PKEY_verify_init(pkctx) <= 0)
-        goto err;
-
-	ret = EVP_PKEY_verify(pkctx, sig, siglen, digest, digestlen);
-err:
-	EVP_PKEY_CTX_free(pkctx);
-	return ret;
-}
-
-*/
+// #include "shim.h"
 import "C"
 
 import (
@@ -113,7 +29,7 @@ const (
 type EllipticCurve int
 
 const (
-	SM2EC EllipticCurve = C.NID_sm2
+	SM2 EllipticCurve = C.NID_sm2
 	// P-256: NIST/SECG curve over a 256 bit prime field
 	Secp256k1 EllipticCurve = C.NID_secp256k1
 	// P-384: NIST/SECG curve over a 384 bit prime field
@@ -123,13 +39,6 @@ const (
 )
 
 type MsgDigest *C.EVP_MD
-
-//var (
-//	SM3_MD    MsgDigest = C.EVP_sm3()
-//	SHA1_MD   MsgDigest = C.EVP_sha1()
-//	SHA256_MD MsgDigest = C.EVP_sha256()
-//	SHA512_MD MsgDigest = C.EVP_sha512()
-//)
 
 func GetDigestByName(name string) (MsgDigest, error) {
 	cname := C.CString(name)
@@ -145,14 +54,26 @@ func GetDigestByName(name string) (MsgDigest, error) {
 
 type PrivateKey interface {
 	KeyType() NID
+	PublicKey() PublicKey
 	Sign(data []byte, md MsgDigest) (signature []byte, err error)
+	Decrypt(ciphertext []byte) ([]byte, error)
+}
+
+type PublicKey interface {
+	KeyType() NID
 	Verify(data, sig []byte, md MsgDigest) error
+	Encrypt(plaintext []byte) ([]byte, error)
 }
 
 type privateKey struct {
-	key *C.EVP_PKEY
+	sk *C.EVP_PKEY
 }
 
+type publicKey struct {
+	pk *C.EVP_PKEY
+}
+
+// openssl: test_EVP_SM2
 // GenerateECKey generates a new elliptic curve private key on the speicified curve.
 func GenerateECKey(curve EllipticCurve) (PrivateKey, error) {
 	// Create context for parameter generation
@@ -195,15 +116,30 @@ func GenerateECKey(curve EllipticCurve) (PrivateKey, error) {
 		return nil, errors.New("failed generating EC private key")
 	}
 
-	p := &privateKey{key: privKey}
+	if curve == SM2 {
+		if C.EVP_PKEY_set_alias_type(privKey, C.EVP_PKEY_SM2) != 1 {
+			return nil, errors.New("failed generating EC private key")
+		}
+	}
+
+	p := &privateKey{sk: privKey}
 	runtime.SetFinalizer(p, func(p *privateKey) {
-		C.EVP_PKEY_free(p.key)
+		C.EVP_PKEY_free(p.sk)
 	})
 	return p, nil
 }
 
 func (p *privateKey) KeyType() NID {
-	return NID(C.EVP_PKEY_id(p.key))
+	return NID(C.EVP_PKEY_id(p.sk))
+}
+
+func (p *privateKey) PublicKey() PublicKey {
+	pk := C.X_export_pk_from_sk(p.sk)
+	pub := &publicKey{pk}
+	runtime.SetFinalizer(pub, func(p *publicKey) {
+		C.EVP_PKEY_free(p.pk)
+	})
+	return pub
 }
 
 func (p *privateKey) Sign(data []byte, md MsgDigest) ([]byte, error) {
@@ -219,7 +155,7 @@ func (p *privateKey) Sign(data []byte, md MsgDigest) ([]byte, error) {
 		if md != nil {
 			return nil, errors.New("message digest must null")
 		}
-		if 1 != C.EVP_DigestSignInit(ctx, nil, nil, nil, p.key) {
+		if 1 != C.EVP_DigestSignInit(ctx, nil, nil, nil, p.sk) {
 			return nil, errors.New("failed to init signature")
 		}
 		// evp signatures are 64 bytes
@@ -241,8 +177,8 @@ func (p *privateKey) Sign(data []byte, md MsgDigest) ([]byte, error) {
 				return nil, err
 			}
 			var siglen C.size_t
-			sig := C.X_ECWithSM3_Sign(p.key, (*C.uchar)(unsafe.Pointer(&digest[0])),
-				C.size_t(len(digest)), &siglen)
+			sig := C.X_ECWithSM3_Sign(p.sk, (*C.uchar)(unsafe.Pointer(&digest[0])),
+				C.size_t(len(digest)), &siglen, nil)
 			if sig == nil {
 				C.ERR_print_errors_fp(C.stderr)
 				return nil, errors.New("failed to ECWithSM3 signature")
@@ -257,10 +193,9 @@ func (p *privateKey) Sign(data []byte, md MsgDigest) ([]byte, error) {
 				return nil, errors.New("failed to update signature")
 			}
 
-			sig := make([]byte, C.EVP_PKEY_size(p.key))
+			sig := make([]byte, C.EVP_PKEY_size(p.sk))
 			var siglen C.uint
-			if 1 != C.EVP_SignFinal(ctx, (*C.uchar)(unsafe.Pointer(&sig[0])), &siglen, p.key) {
-				C.ERR_print_errors_fp(C.stderr)
+			if 1 != C.EVP_SignFinal(ctx, (*C.uchar)(unsafe.Pointer(&sig[0])), &siglen, p.sk) {
 				return nil, errors.New("failed to finalize signature")
 			}
 			return sig[:siglen], nil
@@ -268,7 +203,22 @@ func (p *privateKey) Sign(data []byte, md MsgDigest) ([]byte, error) {
 	}
 }
 
-func (p *privateKey) Verify(data, sig []byte, md MsgDigest) error {
+func (p *privateKey) Decrypt(ciphertext []byte) ([]byte, error) {
+	var outlen C.size_t
+	out := C.X_sk_decrypt(p.sk, (*C.uchar)(&ciphertext[0]), C.size_t(len(ciphertext)), &outlen, nil)
+	if out == nil {
+		return nil, errors.Errorf("failed to decrypt msg [%s]", string(ciphertext))
+	}
+	defer C.free(unsafe.Pointer(out))
+
+	return C.GoBytes(unsafe.Pointer(out), C.int(outlen)), nil
+}
+
+func (p *publicKey) KeyType() NID {
+	return NID(C.EVP_PKEY_id(p.pk))
+}
+
+func (p *publicKey) Verify(data, sig []byte, md MsgDigest) error {
 	if len(data) == 0 || len(sig) == 0 {
 		return errors.New("0-length data or sig")
 	}
@@ -281,7 +231,7 @@ func (p *privateKey) Verify(data, sig []byte, md MsgDigest) error {
 		if md != nil {
 			return errors.New("message digest must null")
 		}
-		if 1 != C.EVP_DigestVerifyInit(ctx, nil, nil, nil, p.key) {
+		if 1 != C.EVP_DigestVerifyInit(ctx, nil, nil, nil, p.pk) {
 			return errors.New("failed to init verify")
 		}
 
@@ -300,8 +250,8 @@ func (p *privateKey) Verify(data, sig []byte, md MsgDigest) error {
 				return err
 			}
 
-			if 1 != C.X_ECWithSM3_Verify(p.key, (*C.uchar)(&digest[0]), C.size_t(len(digest)),
-				(*C.uchar)(&sig[0]), C.size_t(len(sig))) {
+			if 1 != C.X_ECWithSM3_Verify(p.pk, (*C.uchar)(&digest[0]), C.size_t(len(digest)),
+				(*C.uchar)(&sig[0]), C.size_t(len(sig)), nil) {
 				return errors.New("failed to verify ECWithSM3 signature")
 			}
 			return nil
@@ -313,11 +263,21 @@ func (p *privateKey) Verify(data, sig []byte, md MsgDigest) error {
 				return errors.New("failed to update verify")
 			}
 
-			if 1 != C.EVP_VerifyFinal(ctx, (*C.uchar)(unsafe.Pointer(&sig[0])), C.uint(len(sig)), p.key) {
-				C.ERR_print_errors_fp(C.stderr)
+			if 1 != C.EVP_VerifyFinal(ctx, (*C.uchar)(unsafe.Pointer(&sig[0])), C.uint(len(sig)), p.pk) {
 				return errors.New("failed to finalize verify")
 			}
 			return nil
 		}
 	}
+}
+
+func (p *publicKey) Encrypt(plaintext []byte) ([]byte, error) {
+	var outlen C.size_t
+	out := C.X_pk_encrypt(p.pk, (*C.uchar)(&plaintext[0]), C.size_t(len(plaintext)), &outlen, nil)
+	if out == nil {
+		return nil, errors.Errorf("failed to encrypt msg [%s]", string(plaintext))
+	}
+	defer C.free(unsafe.Pointer(out))
+
+	return C.GoBytes(unsafe.Pointer(out), C.int(outlen)), nil
 }

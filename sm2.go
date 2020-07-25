@@ -18,7 +18,7 @@ func (s *SM2Cipher) Sign(k PrivateKey, msg []byte, md MsgDigest) ([]byte, error)
 	return k.Sign(msg, md)
 }
 
-func (s *SM2Cipher) Verify(k PrivateKey, msg, sig []byte, md MsgDigest) (bool, error) {
+func (s *SM2Cipher) Verify(k PublicKey, msg, sig []byte, md MsgDigest) (bool, error) {
 	var err error
 	if md == nil {
 		if md, err = GetDigestByName("SM3"); err != nil {
