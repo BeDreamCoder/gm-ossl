@@ -11,43 +11,46 @@ import "C"
 
 import (
 	"errors"
+	"hash"
 	"runtime"
 	"unsafe"
 )
 
-type SM3Hash struct {
+type SM3Hash struct{}
+
+type sm3Hash struct {
 	ctx    *C.EVP_MD_CTX
 	engine *Engine
 }
 
-func NewSM3Hash() (*SM3Hash, error) {
-	hash := &SM3Hash{}
-	hash.ctx = C.EVP_MD_CTX_new()
-	if hash.ctx == nil {
-		return nil, errors.New("openssl: sm3: unable to allocate ctx")
+func SM3(data []byte) []byte {
+	sh := new(SM3Hash)
+	hasher := sh.NewSm3()
+	if _, err := hasher.Write(data); err != nil {
+		return nil
 	}
-	runtime.SetFinalizer(hash, func(hash *SM3Hash) { hash.Close() })
-	if err := hash.Reset(); err != nil {
-		return nil, err
-	}
-	return hash, nil
+	return hasher.Sum(nil)
 }
 
-func (s *SM3Hash) Close() {
+func (h *SM3Hash) NewSm3() hash.Hash {
+	sm3 := new(sm3Hash)
+	sm3.ctx = C.EVP_MD_CTX_new()
+	if sm3.ctx == nil {
+		panic("openssl: sm3: unable to allocate ctx")
+	}
+	runtime.SetFinalizer(sm3, func(hash *sm3Hash) { hash.Close() })
+	sm3.Reset()
+	return sm3
+}
+
+func (s *sm3Hash) Close() {
 	if s.ctx != nil {
 		C.EVP_MD_CTX_free(s.ctx)
 		s.ctx = nil
 	}
 }
 
-func (s *SM3Hash) Reset() error {
-	if 1 != C.EVP_DigestInit_ex(s.ctx, C.EVP_sm3(), engineRef(s.engine)) {
-		return errors.New("openssl: sm3: cannot init digest ctx")
-	}
-	return nil
-}
-
-func (s *SM3Hash) Write(p []byte) (n int, err error) {
+func (s *sm3Hash) Write(p []byte) (n int, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -58,22 +61,37 @@ func (s *SM3Hash) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-func (s *SM3Hash) Sum() (result [32]byte, err error) {
-	if 1 != C.EVP_DigestFinal_ex(s.ctx,
-		(*C.uchar)(unsafe.Pointer(&result[0])), nil) {
-		return result, errors.New("openssl: sm3: cannot finalize ctx")
+func (s *sm3Hash) Sum(in []byte) []byte {
+	if len(in) > 0 {
+		if 1 != C.EVP_DigestUpdate(s.ctx, unsafe.Pointer(&in[0]), C.size_t(len(in))) {
+			return nil
+		}
 	}
-	return result, s.Reset()
+
+	out := make([]byte, 32)
+	var outlen C.uint
+	if 1 != C.EVP_DigestFinal(s.ctx, (*C.uchar)(unsafe.Pointer(&out[0])), &outlen) {
+		return nil
+	}
+	return out[:outlen]
 }
 
-func SM3(data []byte) (result [32]byte, err error) {
-	hash, err := NewSM3Hash()
-	if err != nil {
-		return result, err
+func (s *sm3Hash) Reset() {
+	C.EVP_DigestInit_ex(s.ctx, C.EVP_sm3(), engineRef(s.engine))
+}
+
+func (s *sm3Hash) Size() int {
+	md := C.EVP_MD_CTX_md(s.ctx)
+	if md == nil {
+		return 0
 	}
-	defer hash.Close()
-	if _, err := hash.Write(data); err != nil {
-		return result, err
+	return int(C.EVP_MD_size(md))
+}
+
+func (s *sm3Hash) BlockSize() int {
+	md := C.EVP_MD_CTX_md(s.ctx)
+	if md == nil {
+		return 0
 	}
-	return hash.Sum()
+	return int(C.EVP_MD_block_size(md))
 }

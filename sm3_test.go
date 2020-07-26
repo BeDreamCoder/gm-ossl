@@ -17,8 +17,7 @@ import (
 
 func TestSM3(t *testing.T) {
 	testdata := []byte("testing sm3 hash")
-	got, err := SM3(testdata)
-	assert.NoError(t, err)
+	got := SM3(testdata)
 
 	assert.Equal(t, "edffff59b9951e6b4b76af9846fcb1cc43455df09b944520843ec32a7a421c5a", hex.EncodeToString(got[:]))
 }
@@ -33,6 +32,6 @@ func BenchmarkSM3(b *testing.B) {
 	b.SetBytes(length)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = SM3(buf)
+		SM3(buf)
 	}
 }

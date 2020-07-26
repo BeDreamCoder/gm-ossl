@@ -172,10 +172,11 @@ func (p *privateKey) Sign(data []byte, md MsgDigest) ([]byte, error) {
 		}
 		//if NID(C.X_EC_GROUP_get_curve_name(p.key)) == NID_sm2 {
 		if NID(C.EVP_MD_type(md)) == NID_sm3 {
-			digest, err := SM3(data)
-			if err != nil {
-				return nil, err
+			digest := SM3(data)
+			if len(digest) == 0 {
+				return nil, errors.New("message digest is null after sm3 hash")
 			}
+
 			var siglen C.size_t
 			sig := C.X_ECWithSM3_Sign(p.sk, (*C.uchar)(unsafe.Pointer(&digest[0])),
 				C.size_t(len(digest)), &siglen, nil)
@@ -245,9 +246,9 @@ func (p *publicKey) Verify(data, sig []byte, md MsgDigest) error {
 			return errors.New("message digest must not null")
 		}
 		if NID(C.EVP_MD_type(md)) == NID_sm3 {
-			digest, err := SM3(data)
-			if err != nil {
-				return err
+			digest := SM3(data)
+			if len(digest) == 0 {
+				return errors.New("message digest is null after sm3 hash")
 			}
 
 			if 1 != C.X_ECWithSM3_Verify(p.pk, (*C.uchar)(&digest[0]), C.size_t(len(digest)),
