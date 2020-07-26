@@ -8,9 +8,10 @@ package gm_ossl
 
 import (
 	"crypto/rand"
-	"github.com/stretchr/testify/assert"
 	"io"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestSm2(t *testing.T) {
@@ -25,9 +26,25 @@ func TestSm2(t *testing.T) {
 	sig, err := sc.Sign(sk, msg, nil)
 	assert.NoError(t, err)
 
-	ok, err := sc.Verify(pk, msg, sig, nil)
+	err = sc.Verify(pk, msg, sig, nil)
 	assert.NoError(t, err)
-	assert.Equal(t, true, ok)
+}
+
+func TestSM2Crypt(t *testing.T) {
+	sk, err := GenerateECKey(SM2)
+	assert.NoError(t, err)
+
+	pk := sk.PublicKey()
+
+	sc := &SM2Cipher{}
+	msg := []byte("testing sm2 crypt")
+
+	ciphertext, err := sc.Encrypt(pk, msg)
+	assert.NoError(t, err)
+
+	plaintext, err := sc.Decrypt(sk, ciphertext)
+	assert.NoError(t, err)
+	assert.Equal(t, msg, plaintext)
 }
 
 func BenchmarkSM2Sign(b *testing.B) {
@@ -50,7 +67,7 @@ func BenchmarkSM2Sign(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		_, err = sc.Verify(pk, buf, sig, nil)
+		err = sc.Verify(pk, buf, sig, nil)
 		if err != nil {
 			b.Fatal(err)
 		}

@@ -18,23 +18,23 @@ func (s *SM2Cipher) Sign(k PrivateKey, msg []byte, md MsgDigest) ([]byte, error)
 	return k.Sign(msg, md)
 }
 
-func (s *SM2Cipher) Verify(k PublicKey, msg, sig []byte, md MsgDigest) (bool, error) {
+func (s *SM2Cipher) Verify(k PublicKey, msg, sig []byte, md MsgDigest) error {
 	var err error
 	if md == nil {
 		if md, err = GetDigestByName("SM3"); err != nil {
-			return false, err
+			return err
 		}
 	}
 	if err = k.Verify(msg, sig, md); err != nil {
-		return false, err
+		return err
 	}
-	return true, nil
+	return nil
 }
 
-func (s *SM2Cipher) Encrypt() {
-
+func (s *SM2Cipher) Encrypt(k PublicKey, plaintext []byte) ([]byte, error) {
+	return k.Encrypt(plaintext)
 }
 
-func (s *SM2Cipher) Decrypt() {
-
+func (s *SM2Cipher) Decrypt(k PrivateKey, ciphertext []byte) ([]byte, error) {
+	return k.Decrypt(ciphertext)
 }
